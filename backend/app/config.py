@@ -63,9 +63,9 @@ class Settings:
 
 def load_settings() -> Settings:
     api_keys = _csv(os.getenv("LLM_API_KEYS"))
-    default_model = os.getenv("LLM_MODEL", "gemini/gemini-2.5-flash").strip()
+    default_model = os.getenv("LLM_MODEL", "gemini/gemini-3.8-flash").strip()
     # Optional: one model per key (same order as LLM_API_KEYS) to spread the
-    # pool across models, e.g. "gemini/gemini-2.5-flash,gemini/gemini-2.5-flash-lite".
+    # pool across models, e.g. "gemini/gemini-3.8-flash,gemini/gemini-3.5-flash-lite".
     per_key_models = _csv(os.getenv("LLM_KEY_MODELS"))
 
     keys = [

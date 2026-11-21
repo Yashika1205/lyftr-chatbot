@@ -9,12 +9,12 @@ from app.main import create_app
 
 def make_settings(tmp_path, **overrides) -> Settings:
     keys = [
-        KeyConfig("key_1", "test-secret-one", "gemini/gemini-2.5-flash"),
-        KeyConfig("key_2", "test-secret-two", "gemini/gemini-2.5-flash"),
+        KeyConfig("key_1", "test-secret-one", "gemini/gemini-3.8-flash"),
+        KeyConfig("key_2", "test-secret-two", "gemini/gemini-3.8-flash"),
     ]
     base = dict(
         keys=keys,
-        models=["gemini/gemini-2.5-flash"],
+        models=["gemini/gemini-3.8-flash"],
         database_path=str(tmp_path / "app.db"),
         allowed_origins=["http://localhost:3000"],
         enable_failure_simulation=True,

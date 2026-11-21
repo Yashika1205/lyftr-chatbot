@@ -33,7 +33,7 @@ render.yaml         Optional Render Blueprint for deploying both tiers
 1. Push this repo to GitHub. In Render: **New → Web Service →** pick the repo, **Root directory** `backend`, **Runtime** Docker.
 2. Environment variables:
    - `LLM_API_KEYS` = two (or more) Gemini API keys, comma-separated (free keys from Google AI Studio)
-   - `LLM_MODEL` = `gemini/gemini-2.5-flash`
+   - `LLM_MODEL` = `gemini/gemini-3.8-flash`
    - `DATABASE_URL` = `sqlite:////data/app.db`
    - `ENABLE_FAILURE_SIMULATION` = `true`
    - `ALLOWED_ORIGINS` = your frontend URL, e.g. `https://your-app.vercel.app` (no trailing slash)
