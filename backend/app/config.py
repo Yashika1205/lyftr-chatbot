@@ -64,7 +64,7 @@ class Settings:
 
 def load_settings() -> Settings:
     api_keys = _csv(os.getenv("LLM_API_KEYS"))
-    default_model = os.getenv("LLM_MODEL", "gemini/gemini-3.8-flash").strip()
+    default_model = os.getenv("LLM_MODEL", "gemini/gemini-3.5-flash-lite").strip()
     # Optional: one model per key (same order as LLM_API_KEYS) to spread the
     # pool across models, e.g. "gemini/gemini-3.8-flash,gemini/gemini-3.5-flash-lite".
     per_key_models = _csv(os.getenv("LLM_KEY_MODELS"))
@@ -86,7 +86,7 @@ def load_settings() -> Settings:
         "gemini/gemini-3.5-flash-lite",
         "gemini/gemini-3.1-flash-lite",
         "gemini/gemini-3.6-flash",
-        "gemini/gemini-3.7-flash",
+        "gemini/gemini-3.8-flash",
     ]
 
     models: list[str] = []
@@ -112,7 +112,7 @@ def load_settings() -> Settings:
         cache_type=os.getenv("CACHE_TYPE", "disk").strip().lower(),
         cache_dir=os.getenv("CACHE_DIR", default_cache_dir),
         cache_ttl_seconds=int(os.getenv("CACHE_TTL_SECONDS", str(7 * 24 * 3600))),
-        request_timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
+        request_timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "15")),
         max_history_messages=int(os.getenv("MAX_HISTORY_MESSAGES", "40")),
         mock_llm=_bool(os.getenv("MOCK_LLM"), False),
     )

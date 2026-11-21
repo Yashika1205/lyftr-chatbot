@@ -127,7 +127,7 @@ class LLMGateway:
         self.settings = settings
         self.cache_enabled = False
         self.last_error: dict[str, Any] | None = None
-        self._preferred: dict[str, str] = {}
+        self._preferred_model: str | None = None
         self._setup_cache()
 
     # ---- cache ----------------------------------------------------------
@@ -191,9 +191,9 @@ class LLMGateway:
         return await litellm.acompletion(**kwargs)
 
     def _models_for(self, key: KeyConfig) -> list[str]:
-        """The key's own model first (or whichever model last worked for it), then fallbacks."""
+        """The model that last worked (on any key) first, then the key's own model, then fallbacks."""
         order = [key.model] + [m for m in self.settings.fallback_models if m != key.model]
-        preferred = self._preferred.get(key.key_id)
+        preferred = self._preferred_model  # last model that worked, shared by all keys
         if preferred in order:
             order.remove(preferred)
             order.insert(0, preferred)
@@ -244,11 +244,11 @@ class LLMGateway:
                 except Exception as exc:  # noqa: BLE001 - every provider failure fails over
                     err = exc if isinstance(exc, ProviderError) else _classify(exc)
                     self._record_error(key, model, err, exc)
-                    if err.status_code in (401, 403) or err.reason in ("timeout", "connection error"):
+                    if err.status_code in (401, 403) or err.reason == "connection error":
                         break  # the key itself is unusable right now: skip its other models
-                    continue  # model-level problem (retired, quota, overloaded): try the next model
+                    continue  # model-level problem (retired, quota, overloaded, slow): next model
 
-                self._preferred[key.key_id] = model
+                self._preferred_model = model
                 await self._cache_store(model, messages, response)
                 return ChatResult(reply, LIVE_INFERENCE, model, in_tok, out_tok, key.key_id, failed_keys)
 

@@ -33,7 +33,7 @@ render.yaml         Optional Render Blueprint for deploying both tiers
 1. Push this repo to GitHub. In Render: **New → Web Service →** pick the repo, **Root directory** `backend`, **Runtime** Docker.
 2. Environment variables:
    - `LLM_API_KEYS` = two (or more) Gemini API keys, comma-separated (free keys from Google AI Studio)
-   - `LLM_MODEL` = `gemini/gemini-3.8-flash`
+   - `LLM_MODEL` = `gemini/gemini-3.5-flash-lite`
    - `DATABASE_URL` = `sqlite:////data/app.db`
    - `ENABLE_FAILURE_SIMULATION` = `true`
    - `ALLOWED_ORIGINS` = your frontend URL, e.g. `https://your-app.vercel.app` (no trailing slash)
@@ -74,7 +74,7 @@ pip install -r requirements-dev.txt
 export LLM_API_KEYS="key-one,key-two" DATABASE_URL="sqlite:///./data/app.db" \
        ALLOWED_ORIGINS="http://localhost:3000" ENABLE_FAILURE_SIMULATION=true
 uvicorn app.main:app --reload --port 8000
-pytest -q                 # 40 tests, run offline in MOCK_LLM mode
+pytest -q                 # 42 tests, run offline in MOCK_LLM mode
 ```
 
 Frontend (Node 20+):
@@ -110,6 +110,8 @@ POST /chat
 
 - `LLM_API_KEYS` becomes an ordered pool `key_1, key_2, …`. Each key can serve the same model or a different one (`LLM_KEY_MODELS`), so the pool can span models.
 - Every provider call goes through `litellm.acompletion`, which normalises errors from any provider into typed exceptions (`RateLimitError`, `ServiceUnavailableError`, `InternalServerError`, `Timeout`, …). The gateway classifies them by status code and message: 429 and quota errors (`RESOURCE_EXHAUSTED`, "quota", "rate limit") and any 5xx, timeout or connection error move on to the next key. A revoked or invalid key (401/403) also fails over, so one bad key never breaks the app.
+- **Model fallback inside a key:** if a key's model is rejected for model-specific reasons (retired, "high demand" 503, per-model free-tier quota, timeout), the same key tries the next model in `LLM_FALLBACK_MODELS` before the pool moves to the next key. An auth error (401/403) skips the key's remaining models straight away. The model that last worked is tried first on every key, so a degraded model costs time only once. `fallback_attempts` still counts failed **keys**, as the contract defines it.
+- **Diagnostics:** `/health` also returns `models` and `last_provider_error` (time, key id, model, status and the provider's message, with keys scrubbed). The contract allows extra fields, so a failing deployment can be diagnosed without opening the server logs.
 - LiteLLM's own retries are off (`num_retries=0`): retrying a rate-limited key wastes time, and moving to the next key is faster.
 - **Why an explicit loop instead of LiteLLM's Router fallbacks:** the contract needs the exact `key_id` that answered and the number of keys that failed first (`fallback_attempts`), and it needs failures injected per key for one request only. An explicit loop over `litellm.acompletion` gives exact numbers for both while LiteLLM still does the provider calls, error mapping and caching.
 - **Failure simulation:** when `ENABLE_FAILURE_SIMULATION=true`, `X-Simulate-Failure` (`key_1=429`, `key_1=429,key_2=500`, `*=503`) makes the listed keys raise the same LiteLLM exception a real provider failure would, for that request only, so it takes exactly the same failover path. Requests with the header skip the cache read so the key pool is always exercised (otherwise a cached prompt would answer without touching any key). Unsupported statuses or malformed entries return 422. Without the flag the header is ignored.
@@ -191,7 +193,7 @@ curl -s -X POST $B/chat -H 'Content-Type: application/json' \
 
 ### Automated tests
 
-`backend/tests/test_api.py`: 40 tests covering the response shape, cache hit/miss rules (new session, same session, different system prompt), identical reply and stored tokens on hits, cache faster than live, per-request tokens, multi-turn memory, session isolation, history survives restart, every 422 case, malformed JSON, 404, failover for 429/500/502/503, 503 with nothing stored, simulation per request only and off when disabled, real LiteLLM `RateLimitError` failover, and no leaked exceptions or secrets.
+`backend/tests/test_api.py`: 42 tests covering the response shape, cache hit/miss rules (new session, same session, different system prompt), identical reply and stored tokens on hits, cache faster than live, per-request tokens, multi-turn memory, session isolation, history survives restart, every 422 case, malformed JSON, 404, failover for 429/500/502/503, 503 with nothing stored, simulation per request only and off when disabled, real LiteLLM `RateLimitError` failover, and no leaked exceptions or secrets.
 
 ---
 
@@ -207,7 +209,8 @@ curl -s -X POST $B/chat -H 'Content-Type: application/json' \
 - **Failure simulation in the UI:** a settings dropdown sends `X-Simulate-Failure` with each message, with a visible banner while it's on, so failover is easy to demo without curl.
 - **Disk-backed LiteLLM cache on the data volume:** cache hits survive restarts, not just history.
 - **Offline mock mode (`MOCK_LLM=true`):** deterministic replies that echo the earlier turn, so reviewers can run the full stack and the test suite with no API keys or quota.
-- **Pool across models:** `LLM_KEY_MODELS` assigns a model per key, so failover can also cross models.
+- **Pool across models:** `LLM_KEY_MODELS` assigns a model per key, and `LLM_FALLBACK_MODELS` lets each key fall back across models, so a retired or overloaded model never takes the app down.
+- **Self-diagnosing `/health`:** reports the last provider error (keys redacted) and the model list.
 - **Extra metadata in the UI:** key id and a failover badge on each reply, plus a health indicator (keys configured, cache on/off).
 - **Session system prompt** (`system-prompt-input`): remembered per session in SQLite and part of the cache key.
 - **Retry button** on 503 and network errors; live character counter for the 4000-character limit.
