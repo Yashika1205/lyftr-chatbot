@@ -24,10 +24,12 @@ render.yaml         Optional Render Blueprint for deploying both tiers
 
 | Tier | URL |
 |---|---|
-| Frontend | _set after deployment_ |
-| Backend | _set after deployment_ (`/health`, `/chat`, `/sessions/{id}/messages`) |
+| Frontend | https://lyftr-chatbot-swart.vercel.app |
+| Backend | https://lyftr-chatbot-5ww3.onrender.com (`/health`, `/chat`, `/sessions/{id}/messages`) |
 
-### How to deploy (≈10 minutes)
+The backend runs on Render's free plan, which sleeps after ~15 minutes idle: the first request after a pause can take up to a minute while it wakes.
+
+### How it was deployed
 
 **Backend on Render** (Docker web service)
 1. Push this repo to GitHub. In Render: **New → Web Service →** pick the repo, **Root directory** `backend`, **Runtime** Docker.
