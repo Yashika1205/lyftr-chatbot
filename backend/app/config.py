@@ -54,7 +54,8 @@ class Settings:
     request_timeout_seconds: float
     max_history_messages: int
     mock_llm: bool
-    models: list[str] = field(default_factory=list)
+    models: list[str] = field(default_factory=list)          # every model that may answer
+    fallback_models: list[str] = field(default_factory=list)  # tried per key after its own model
 
     @property
     def keys_configured(self) -> int:
@@ -77,10 +78,21 @@ def load_settings() -> Settings:
         for i, key in enumerate(api_keys)
     ]
 
+    # Backup models tried on the same key when its primary model is rejected
+    # (retired, not on the free tier, per-model quota). Set LLM_FALLBACK_MODELS=""
+    # to disable.
+    fallback_env = os.getenv("LLM_FALLBACK_MODELS")
+    fallback_models = _csv(fallback_env) if fallback_env is not None else [
+        "gemini/gemini-3.5-flash-lite",
+        "gemini/gemini-3.1-flash-lite",
+        "gemini/gemini-3.6-flash",
+        "gemini/gemini-3.7-flash",
+    ]
+
     models: list[str] = []
-    for k in keys:
-        if k.model not in models:
-            models.append(k.model)
+    for name in [k.model for k in keys] + fallback_models:
+        if name not in models:
+            models.append(name)
 
     database_url = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
     db_path = sqlite_path_from_url(database_url)
@@ -89,6 +101,7 @@ def load_settings() -> Settings:
     return Settings(
         keys=keys,
         models=models,
+        fallback_models=fallback_models,
         database_path=db_path,
         allowed_origins=_csv(os.getenv("ALLOWED_ORIGINS", "http://localhost:3000")),
         enable_failure_simulation=_bool(os.getenv("ENABLE_FAILURE_SIMULATION"), False),

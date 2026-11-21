@@ -14,7 +14,8 @@ def make_settings(tmp_path, **overrides) -> Settings:
     ]
     base = dict(
         keys=keys,
-        models=["gemini/gemini-3.8-flash"],
+        models=["gemini/gemini-3.8-flash", "gemini/gemini-3.5-flash-lite"],
+        fallback_models=["gemini/gemini-3.5-flash-lite"],
         database_path=str(tmp_path / "app.db"),
         allowed_origins=["http://localhost:3000"],
         enable_failure_simulation=True,

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import warnings
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any
 
@@ -125,6 +126,8 @@ class LLMGateway:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.cache_enabled = False
+        self.last_error: dict[str, Any] | None = None
+        self._preferred: dict[str, str] = {}
         self._setup_cache()
 
     # ---- cache ----------------------------------------------------------
@@ -173,19 +176,40 @@ class LLMGateway:
             "model": key.model,
         }
 
-    async def _call_key(self, key: KeyConfig, messages: list[dict[str, str]]) -> Any:
+    async def _call_key(self, key: KeyConfig, model: str, messages: list[dict[str, str]]) -> Any:
         kwargs: dict[str, Any] = {
-            "model": key.model,
+            "model": model,
             "messages": messages,
             "api_key": key.api_key,
             "timeout": self.settings.request_timeout_seconds,
-            "num_retries": 0,   # failover is ours: move to the next key, don't retry this one
+            "num_retries": 0,   # failover is ours: move on instead of retrying
             "caching": False,   # cache is read before and written after, explicitly
         }
         if self.settings.mock_llm:
             await asyncio.sleep(0.35)  # stand-in for network latency
             kwargs["mock_response"] = self._mock_response(key, messages)
         return await litellm.acompletion(**kwargs)
+
+    def _models_for(self, key: KeyConfig) -> list[str]:
+        """The key's own model first (or whichever model last worked for it), then fallbacks."""
+        order = [key.model] + [m for m in self.settings.fallback_models if m != key.model]
+        preferred = self._preferred.get(key.key_id)
+        if preferred in order:
+            order.remove(preferred)
+            order.insert(0, preferred)
+        return order
+
+    def _record_error(self, key: KeyConfig, model: str, err: ProviderError, exc: Exception) -> None:
+        detail = _safe_detail(exc, [k.api_key for k in self.settings.keys])
+        self.last_error = {
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "key_id": key.key_id,
+            "model": model,
+            "status": err.status_code,
+            "detail": detail,
+        }
+        logger.warning("key %s / %s failed (%s %s) | %s",
+                       key.key_id, model, err.status_code, err.reason, detail)
 
     # ---- public ---------------------------------------------------------
 
@@ -200,25 +224,35 @@ class LLMGateway:
             if reply:
                 return ChatResult(reply, LLM_CACHE, model, in_tok, out_tok, None, 0)
 
-        failures = 0
+        failed_keys = 0
         for key in self.settings.keys:
-            try:
-                status = simulated_status_for(simulation, key.key_id)
-                if status is not None:
-                    raise _simulated_exception(status, key)
-                response = await self._call_key(key, messages)
-                reply, in_tok, out_tok = _extract(response)
-                if not reply:
-                    raise ProviderError(None, "empty completion")
-            except Exception as exc:  # noqa: BLE001 - every provider failure fails over
-                err = exc if isinstance(exc, ProviderError) else _classify(exc)
-                failures += 1
-                logger.warning("key %s failed (%s %s), trying next key | %s",
-                               key.key_id, err.status_code, err.reason,
-                               _safe_detail(exc, [k.api_key for k in self.settings.keys]))
+            status = simulated_status_for(simulation, key.key_id)
+            if status is not None:
+                # Simulated: this key behaves as if its provider returned `status`.
+                exc = _simulated_exception(status, key)
+                err = _classify(exc)
+                logger.warning("key %s failed (simulated %s), trying next key", key.key_id, status)
+                failed_keys += 1
                 continue
 
-            await self._cache_store(key.model, messages, response)
-            return ChatResult(reply, LIVE_INFERENCE, key.model, in_tok, out_tok, key.key_id, failures)
+            for model in self._models_for(key):
+                try:
+                    response = await self._call_key(key, model, messages)
+                    reply, in_tok, out_tok = _extract(response)
+                    if not reply:
+                        raise ProviderError(None, "empty completion")
+                except Exception as exc:  # noqa: BLE001 - every provider failure fails over
+                    err = exc if isinstance(exc, ProviderError) else _classify(exc)
+                    self._record_error(key, model, err, exc)
+                    if err.status_code in (401, 403) or err.reason in ("timeout", "connection error"):
+                        break  # the key itself is unusable right now: skip its other models
+                    continue  # model-level problem (retired, quota, overloaded): try the next model
+
+                self._preferred[key.key_id] = model
+                await self._cache_store(model, messages, response)
+                return ChatResult(reply, LIVE_INFERENCE, model, in_tok, out_tok, key.key_id, failed_keys)
+
+            failed_keys += 1
+            logger.warning("key %s exhausted, trying next key", key.key_id)
 
         raise AllProvidersUnavailable()

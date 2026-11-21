@@ -14,7 +14,10 @@ from tests.conftest import make_settings
 def test_health_ok(client):
     r = client.get("/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok", "keys_configured": 2, "cache_enabled": True}
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["keys_configured"] == 2
+    assert body["cache_enabled"] is True
 
 
 def test_health_503_without_keys(tmp_path):
@@ -307,7 +310,49 @@ def test_real_rate_limit_error_fails_over(client, new_session, unique, monkeypat
     r = client.post("/chat", json={"session_id": new_session(), "message": unique()})
     assert r.status_code == 200
     assert r.json()["metadata"]["key_id"] == "key_2"
-    assert calls == ["test-secret-one", "test-secret-two"]
+    assert r.json()["metadata"]["fallback_attempts"] == 1
+    assert calls[-1] == "test-secret-two" and calls.count("test-secret-two") == 1
+
+
+def test_auth_error_skips_rest_of_key(client, new_session, unique, monkeypatch):
+    calls = []
+    original = litellm.acompletion
+
+    async def bad_key(**kwargs):
+        calls.append((kwargs["api_key"], kwargs["model"]))
+        if kwargs["api_key"] == "test-secret-one":
+            raise litellm.AuthenticationError(message="API key not valid", llm_provider="gemini",
+                                              model=kwargs["model"])
+        return await original(**kwargs)
+
+    monkeypatch.setattr(litellm, "acompletion", bad_key)
+    r = client.post("/chat", json={"session_id": new_session(), "message": unique()})
+    assert r.json()["metadata"]["key_id"] == "key_2"
+    assert [c[0] for c in calls] == ["test-secret-one", "test-secret-two"]
+    err = client.get("/health").json()["last_provider_error"]
+    assert err["key_id"] == "key_1" and err["status"] == 401
+    assert "test-secret" not in str(err)
+
+
+def test_retired_model_falls_back_to_next_model_same_key(client, new_session, unique, monkeypatch):
+    original = litellm.acompletion
+
+    async def retired(**kwargs):
+        if kwargs["model"] == "gemini/gemini-3.8-flash":
+            raise litellm.NotFoundError(message="model no longer available", llm_provider="gemini",
+                                        model=kwargs["model"])
+        return await original(**kwargs)
+
+    monkeypatch.setattr(litellm, "acompletion", retired)
+    sid = new_session()
+    r = client.post("/chat", json={"session_id": sid, "message": unique()}).json()
+    meta = r["metadata"]
+    assert meta["key_id"] == "key_1"
+    assert meta["fallback_attempts"] == 0
+    assert meta["model"] == "gemini/gemini-3.5-flash-lite"
+    # the working model is remembered for the next request
+    r2 = client.post("/chat", json={"session_id": sid, "message": unique()}).json()
+    assert r2["metadata"]["model"] == "gemini/gemini-3.5-flash-lite"
 
 
 def test_unexpected_exceptions_never_leak(client, new_session, unique, monkeypatch):

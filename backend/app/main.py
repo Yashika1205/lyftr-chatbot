@@ -140,7 +140,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "cache_enabled": bool(gateway and gateway.cache_enabled),
                 },
             )
-        return {"status": "ok", "keys_configured": keys, "cache_enabled": gateway.cache_enabled}
+        return {
+            "status": "ok",
+            "keys_configured": keys,
+            "cache_enabled": gateway.cache_enabled,
+            # extra diagnostics (allowed by the contract); never contains a key
+            "models": settings.models,
+            "last_provider_error": gateway.last_error,
+        }
 
     @app.post("/chat", response_model=ChatResponse)
     async def chat(
