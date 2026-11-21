@@ -1,0 +1,37 @@
+# Render Blueprint: backend (Docker web service) + frontend (static site).
+# Secrets marked sync:false are entered in the Render dashboard, never committed.
+services:
+  - type: web
+    name: lyftr-chatbot-backend
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: LLM_API_KEYS
+        sync: false
+      - key: LLM_MODEL
+        value: gemini/gemini-2.5-flash
+      - key: DATABASE_URL
+        value: sqlite:////data/app.db
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: ENABLE_FAILURE_SIMULATION
+        value: "true"
+      - key: CACHE_TYPE
+        value: disk
+
+  - type: web
+    name: lyftr-chatbot-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
