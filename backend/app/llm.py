@@ -112,6 +112,15 @@ def _classify(exc: Exception) -> ProviderError:
     return ProviderError(status if isinstance(status, int) else None, type(exc).__name__)
 
 
+def _safe_detail(exc: Exception, secrets: list[str]) -> str:
+    """Short provider error text for logs, with any API key scrubbed out."""
+    text = " ".join(str(exc).split())[:300]
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "***")
+    return text
+
+
 class LLMGateway:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -204,8 +213,9 @@ class LLMGateway:
             except Exception as exc:  # noqa: BLE001 - every provider failure fails over
                 err = exc if isinstance(exc, ProviderError) else _classify(exc)
                 failures += 1
-                logger.warning("key %s failed (%s %s), trying next key",
-                               key.key_id, err.status_code, err.reason)
+                logger.warning("key %s failed (%s %s), trying next key | %s",
+                               key.key_id, err.status_code, err.reason,
+                               _safe_detail(exc, [k.api_key for k in self.settings.keys]))
                 continue
 
             await self._cache_store(key.model, messages, response)
